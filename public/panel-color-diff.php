@@ -67,6 +67,32 @@
   .reflection-warning p:last-child {
     margin-bottom: 0;
   }
+  .heatmap-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 0.8rem;
+    color: #444;
+  }
+  .heatmap-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .heatmap-legend .bar {
+    width: 90px;
+    height: 10px;
+    border-radius: 5px;
+    background: linear-gradient(to right, hsl(120,80%,50%), hsl(60,80%,50%), hsl(0,80%,50%));
+  }
   .mode-buttons {
     display: flex;
     gap: 8px;
@@ -209,6 +235,19 @@
       空や周囲の景色が映り込んでいない、フラットに見える塗装面を選んでください（ボンネットの端やドアの中央付近がおすすめです）。
     </p>
 
+    <div class="heatmap-bar">
+      <label class="heatmap-toggle">
+        <input type="checkbox" id="heatmapToggle" checked>
+        映り込みガイドを表示
+      </label>
+      <div class="heatmap-legend">
+        <span>フラット</span>
+        <span class="bar"></span>
+        <span>映り込みの可能性</span>
+      </div>
+    </div>
+    <p class="selection-guidance" id="heatmapStatus" hidden>ヒートマップを計算中...</p>
+
     <div class="mode-buttons">
       <button type="button" id="modeA" class="mode-btn active" data-mode="A">① パネルAを選択</button>
       <button type="button" id="modeB" class="mode-btn" data-mode="B">② パネルBを選択</button>
@@ -265,16 +304,27 @@
   const swatchB = document.getElementById('swatchB');
   const rgbAEl = document.getElementById('rgbA');
   const rgbBEl = document.getElementById('rgbB');
+  const heatmapToggleEl = document.getElementById('heatmapToggle');
+  const heatmapStatusEl = document.getElementById('heatmapStatus');
 
   // 元画像をオフスクリーンで保持し、オーバーレイ(枠線)に汚染されない平均RGB計算に使う
   const imgCanvas = document.createElement('canvas');
   const imgCtx = imgCanvas.getContext('2d');
+
+  // 映り込みガイド(ヒートマップ)の設定。矩形選択前の段階で、画像をタイルに分割し
+  // タイルごとの明度(L*)標準偏差を計算して色付け表示する(緑=フラット、赤=映り込みの可能性)。
+  // 事後の警告(サーバー側、選択範囲全体のL*標準偏差)とは別の、選択前ガイド用の指標。
+  const HEATMAP_TILE_SIZE = 30; // px (表示解像度のcanvas上でのタイルサイズ)
+  const HEATMAP_SAMPLE_STRIDE = 3; // タイル内はこの間隔でサンプリング(スマホの負荷対策)
+  const HEATMAP_MAX_STDDEV = 10; // これ以上で最も赤色。タイルは小さく分散が出やすいためやや高め
 
   let img = new Image();
   let currentFile = null; // サーバーへ送る元ファイル(File)
   let scale = 1; // 元画像px * scale = canvas表示px
   let mode = 'A';
   let rects = { A: null, B: null }; // 元画像ピクセル座標 {x,y,w,h}
+  let heatmapTiles = []; // [{x,y,w,h,stdDev}, ...] (canvas座標系)
+  let heatmapEnabled = true;
   let drawing = false;
   let dragStart = null;
   let currentDragRectCanvas = null; // ドラッグ中プレビュー(canvas座標系)
@@ -313,12 +363,85 @@
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
     canvasWrap.hidden = false;
-    redraw();
+
+    heatmapTiles = [];
+    redraw(); // まず画像だけ即座に表示
+
+    // ヒートマップ計算は画像の初期描画後に回す(体感速度優先)。縮小済みのimgCanvas上で行うため、
+    // 元写真が高解像度でも計算量は画面表示サイズ相当に収まる。
+    heatmapStatusEl.hidden = false;
+    requestAnimationFrame(function () {
+      heatmapTiles = computeHeatmapTiles();
+      heatmapStatusEl.hidden = true;
+      redraw();
+    });
   }
+
+  function computeHeatmapTiles() {
+    const w = imgCanvas.width;
+    const h = imgCanvas.height;
+    const data = imgCtx.getImageData(0, 0, w, h).data;
+
+    const tiles = [];
+    for (let ty = 0; ty < h; ty += HEATMAP_TILE_SIZE) {
+      const tileH = Math.min(HEATMAP_TILE_SIZE, h - ty);
+      for (let tx = 0; tx < w; tx += HEATMAP_TILE_SIZE) {
+        const tileW = Math.min(HEATMAP_TILE_SIZE, w - tx);
+
+        const lValues = [];
+        for (let py = 0; py < tileH; py += HEATMAP_SAMPLE_STRIDE) {
+          for (let px = 0; px < tileW; px += HEATMAP_SAMPLE_STRIDE) {
+            const idx = ((ty + py) * w + (tx + px)) * 4;
+            lValues.push(srgbToL(data[idx], data[idx + 1], data[idx + 2]));
+          }
+        }
+
+        let stdDev = 0;
+        if (lValues.length > 1) {
+          const mean = lValues.reduce(function (a, v) { return a + v; }, 0) / lValues.length;
+          const variance = lValues.reduce(function (a, v) { return a + (v - mean) * (v - mean); }, 0) / lValues.length;
+          stdDev = Math.sqrt(variance);
+        }
+        tiles.push({ x: tx, y: ty, w: tileW, h: tileH, stdDev: stdDev });
+      }
+    }
+    return tiles;
+  }
+
+  // sRGB(0-255) -> CIE L*のみを計算する軽量版(a,bは映り込みガイドには不要なので省略)
+  function srgbToL(r, g, b) {
+    const linearize = function (c) {
+      c = c / 255;
+      return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    const y = linearize(r) * 0.2126729 + linearize(g) * 0.7151522 + linearize(b) * 0.0721750;
+    const delta = 6 / 29;
+    const fy = y > delta * delta * delta ? Math.pow(y, 1 / 3) : (y / (3 * delta * delta) + 4 / 29);
+    return 116 * fy - 16;
+  }
+
+  function drawHeatmapTiles() {
+    ctx.save();
+    heatmapTiles.forEach(function (tile) {
+      const t = Math.max(0, Math.min(1, tile.stdDev / HEATMAP_MAX_STDDEV));
+      const hue = 120 - t * 120; // 緑(120=フラット) -> 赤(0=映り込みの可能性)
+      ctx.fillStyle = 'hsla(' + hue.toFixed(0) + ', 80%, 50%, 0.35)';
+      ctx.fillRect(tile.x, tile.y, tile.w, tile.h);
+    });
+    ctx.restore();
+  }
+
+  heatmapToggleEl.addEventListener('change', function () {
+    heatmapEnabled = heatmapToggleEl.checked;
+    redraw();
+  });
 
   function redraw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(imgCanvas, 0, 0);
+    if (heatmapEnabled && heatmapTiles.length > 0) {
+      drawHeatmapTiles();
+    }
     drawRectOverlay(rects.A, getCssColor('--color-a'), 'A', false);
     drawRectOverlay(rects.B, getCssColor('--color-b'), 'B', false);
     if (currentDragRectCanvas) {

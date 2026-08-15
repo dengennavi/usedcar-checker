@@ -80,6 +80,39 @@
     width: 100%;
     height: 100%;
   }
+  /* ガイド枠の位置(left/top/right/bottom)はJS側のGUIDE_X_RATIO/GUIDE_Y_RATIOと
+     一致させること。ここは表示専用、タイル計算の対象範囲はJS側で制御している。 */
+  .guide-frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .guide-box {
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    top: 18%;
+    bottom: 18%;
+    border: 2px solid rgba(255,255,255,0.9);
+    border-radius: 8px;
+    /* 枠の外側全体を暗くする(枠内に注目を集める) */
+    box-shadow: 0 0 0 9999px rgba(0,0,0,0.55);
+  }
+  .guide-label {
+    position: absolute;
+    left: 50%;
+    top: calc(18% - 24px);
+    transform: translateX(-50%);
+    margin: 0;
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: bold;
+    white-space: nowrap;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+  }
   .controls {
     margin-top: 12px;
     background: #fff;
@@ -152,6 +185,10 @@
   <div class="video-wrap" id="videoWrap" hidden>
     <video id="video" autoplay playsinline muted></video>
     <canvas id="overlayCanvas"></canvas>
+    <div class="guide-frame">
+      <p class="guide-label">車体をこの枠内に収めてください</p>
+      <div class="guide-box"></div>
+    </div>
   </div>
 
   <div class="controls" id="controls" hidden>
@@ -175,6 +212,13 @@
   const PROCESS_INTERVAL_MS = 250; // 0.2〜0.3秒ごとに再判定
   const DELTA_AB_THRESHOLD = 2.0;  // panel-color-diff.phpのバックエンドと同じ暫定閾値
   const HANDOFF_STORAGE_KEY = 'usedcarChecker.realtimeHandoffPhoto';
+
+  // ガイド枠(車体をこの中に収めてもらう範囲)。CSSの.guide-box(left/right:10%, top/bottom:18%)と
+  // 必ず一致させること。枠外は生垣・地面等の背景が映り込みやすく、面積が広いと背景色が
+  // 「多数派の色」として誤って基準色に選ばれてしまう(実機で車体全体が誤ハイライトされる不具合が発生)。
+  // 基準色の算出・ハイライト判定とも、この枠内のタイルだけを対象にすることで防ぐ。
+  const GUIDE_X_RATIO = 0.10; // 左右の除外幅の割合
+  const GUIDE_Y_RATIO = 0.18; // 上下の除外幅の割合
 
   const videoEl = document.getElementById('video');
   const overlayCanvas = document.getElementById('overlayCanvas');
@@ -302,11 +346,18 @@
     const ph = procCanvas.height;
     const data = procCtx.getImageData(0, 0, pw, ph).data;
 
+    // ガイド枠内(procCanvas座標系)のみを対象にする。枠外の背景タイルはそもそも
+    // 生成しないため、基準色の算出にもハイライト判定にも一切影響しない。
+    const guideX0 = Math.round(pw * GUIDE_X_RATIO);
+    const guideY0 = Math.round(ph * GUIDE_Y_RATIO);
+    const guideX1 = Math.round(pw * (1 - GUIDE_X_RATIO));
+    const guideY1 = Math.round(ph * (1 - GUIDE_Y_RATIO));
+
     const tiles = [];
-    for (let ty = 0; ty < ph; ty += TILE_SIZE) {
-      const tileH = Math.min(TILE_SIZE, ph - ty);
-      for (let tx = 0; tx < pw; tx += TILE_SIZE) {
-        const tileW = Math.min(TILE_SIZE, pw - tx);
+    for (let ty = guideY0; ty < guideY1; ty += TILE_SIZE) {
+      const tileH = Math.min(TILE_SIZE, guideY1 - ty);
+      for (let tx = guideX0; tx < guideX1; tx += TILE_SIZE) {
+        const tileW = Math.min(TILE_SIZE, guideX1 - tx);
         const rgb = medianRgbOfTile(data, pw, tx, ty, tileW, tileH);
         const lab = srgbToLab(rgb[0], rgb[1], rgb[2]);
         tiles.push({ x: tx, y: ty, w: tileW, h: tileH, lab: lab });

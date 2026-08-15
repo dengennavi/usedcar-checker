@@ -66,7 +66,7 @@ function applyExifOrientation($im, string $path)
 function parseRect(mixed $raw, string $label): array
 {
     if (!is_string($raw)) {
-        fail("{$label} が指定されていません");
+        fail("{$label}が指定されていません");
     }
     $rect = json_decode($raw, true);
     if (!is_array($rect) || !isset($rect['x'], $rect['y'], $rect['w'], $rect['h'])
@@ -122,7 +122,7 @@ $imgH = imagesy($im);
 
 foreach (['パネルA' => $rectA, 'パネルB' => $rectB] as $label => $rect) {
     if ($rect['x'] < 0 || $rect['y'] < 0 || $rect['x'] >= $imgW || $rect['y'] >= $imgH || $rect['w'] <= 0 || $rect['h'] <= 0) {
-        fail("{$label} の座標が画像範囲外です（画像サイズ: {$imgW}x{$imgH}）");
+        fail("{$label}の座標が画像範囲外です（画像サイズ: {$imgW}x{$imgH}）");
     }
 }
 

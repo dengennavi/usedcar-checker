@@ -297,6 +297,9 @@
     <p class="selection-guidance">
       空や周囲の景色が映り込んでいない、フラットに見える塗装面を選んでください（ボンネットの端やドアの中央付近がおすすめです）。
     </p>
+    <p class="selection-guidance">
+      同じ材質のパネル同士（ドアとフェンダー、ボンネットとルーフなど）を比較してください。バンパーは樹脂製で、ボディの金属パネルとは元々塗装が異なるため、比較には適しません。
+    </p>
 
     <div class="heatmap-bar">
       <label class="heatmap-toggle">

@@ -23,6 +23,13 @@ const DELTA_AB_CAUTION = 1.0;   // これ以上で「要注意」
 // 実車データが少ないため暫定値。フラットな塗装面なら数ポイント程度、
 // 空や建物の映り込みが混ざると大きく跳ね上がる想定。
 const L_STDDEV_WARNING_THRESHOLD = 8.0;
+// 白・シルバー・パール系の判定信頼性低下の目安。実車テストで、白/シルバー系の車の
+// 同一材質パネル同士でもΔab=11.94という誤判定が出たケースがあり、局所的には
+// ヒートマップ上「フラット」判定でも、パネルごとに違う空の映り込み色を拾っていた。
+// 高明度・低彩度の塗装では周囲の映り込み色がΔabを支配しやすいことが分かっている。
+// これも暫定値であり、実車データが増え次第キャリブレーションが必要。
+const WHITE_SILVER_L_THRESHOLD = 70.0;      // 平均Lがこれを超えたら高明度とみなす
+const WHITE_SILVER_CHROMA_THRESHOLD = 15.0; // 平均クロマがこれ未満なら低彩度とみなす
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
@@ -176,6 +183,16 @@ foreach (['パネルA' => $sampleA, 'パネルB' => $sampleB] as $label => $samp
     }
 }
 
+// 白・シルバー・パール系警告: 高明度・低彩度の車は、パネル内がフラットに見えても
+// パネルごとに違う空・周囲の映り込み色を拾いやすく、Δab判定そのものの信頼性が下がる。
+// 判定結果(verdict)とは別枠の警告として返す。
+$avgL = ($labA[0] + $labB[0]) / 2;
+$avgChroma = (ColorDiff::chroma($labA) + ColorDiff::chroma($labB)) / 2;
+$lowReliabilityWarning = null;
+if ($avgL > WHITE_SILVER_L_THRESHOLD && $avgChroma < WHITE_SILVER_CHROMA_THRESHOLD) {
+    $lowReliabilityWarning = 'この車は白・シルバー系のため、周囲の映り込みの影響が大きく、色差判定の精度が低下します。参考程度に留めてください。';
+}
+
 echo json_encode([
     'ok' => true,
     'deltaAb' => round($deltaAb, 3),
@@ -185,6 +202,7 @@ echo json_encode([
     'verdict' => $verdict,
     'message' => $message,
     'warnings' => $warnings,
+    'lowReliabilityWarning' => $lowReliabilityWarning,
     'panelA' => [
         'rgb' => array_map(static fn($v) => round($v, 1), $rgbA),
         'lab' => array_map(static fn($v) => round($v, 2), $labA),

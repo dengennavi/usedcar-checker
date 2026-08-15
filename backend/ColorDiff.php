@@ -161,6 +161,20 @@ final class ColorDiff
     }
 
     /**
+     * クロマ C* = sqrt(a²+b²)。原点(無彩色)からの距離＝彩度の強さ。
+     * 白・シルバー・パール系のような低彩度塗装では、Δab判定が周囲の映り込み色に
+     * 支配されやすく機能しにくいため、判定信頼性の目安として利用する。
+     *
+     * @param array{0:float,1:float,2:float} $lab
+     */
+    public static function chroma(array $lab): float
+    {
+        [, $a, $b] = $lab;
+
+        return sqrt($a ** 2 + $b ** 2);
+    }
+
+    /**
      * CIEDE2000色差(ΔE00)を計算する (Sharma, Wu, Dalal 2005)。
      * 主判定には使わず、参考値として結果に含める（Lの影響を受けるため）。
      *

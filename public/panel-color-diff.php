@@ -67,6 +67,17 @@
   .reflection-warning p:last-child {
     margin-bottom: 0;
   }
+  .low-reliability-warning {
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: #f3ecff;
+    border: 2px solid #7a3ff0;
+    color: #4a1f99;
+    font-size: 0.88rem;
+    font-weight: bold;
+    line-height: 1.5;
+  }
   .heatmap-bar {
     display: flex;
     align-items: center;
@@ -330,6 +341,7 @@
     <button type="button" id="submitBtn" disabled>判定する</button>
 
     <div id="reflectionWarning" class="reflection-warning" hidden></div>
+    <div id="lowReliabilityWarning" class="low-reliability-warning" hidden></div>
 
     <div id="resultSummary" hidden>
       <p class="verdict-title" id="verdictTitle"></p>
@@ -405,6 +417,7 @@
   const resultEl = document.getElementById('result');
   const rawResultEl = document.getElementById('rawResult');
   const reflectionWarningEl = document.getElementById('reflectionWarning');
+  const lowReliabilityWarningEl = document.getElementById('lowReliabilityWarning');
   const resultSummaryEl = document.getElementById('resultSummary');
   const verdictTitleEl = document.getElementById('verdictTitle');
   const verdictDeEl = document.getElementById('verdictDe');
@@ -478,6 +491,7 @@
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
+    lowReliabilityWarningEl.hidden = true;
     productRecommendationEl.hidden = true;
     canvasWrap.hidden = false;
 
@@ -676,6 +690,7 @@
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
+    lowReliabilityWarningEl.hidden = true;
     productRecommendationEl.hidden = true;
     redraw();
   });
@@ -734,6 +749,7 @@
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
+    lowReliabilityWarningEl.hidden = true;
     productRecommendationEl.hidden = true;
 
     const formData = new FormData();
@@ -752,6 +768,7 @@
         verdictDeEl.textContent = data.error || ('HTTPエラー: ' + res.status);
         valAEl.textContent = '';
         valBEl.textContent = '';
+        lowReliabilityWarningEl.hidden = true;
         productRecommendationEl.hidden = true;
       } else {
         renderResult(data);
@@ -764,6 +781,7 @@
       resultSummaryEl.className = 'verdict-caution';
       verdictTitleEl.textContent = '通信エラー';
       verdictDeEl.textContent = String(err);
+      lowReliabilityWarningEl.hidden = true;
       productRecommendationEl.hidden = true;
     } finally {
       submitBtn.disabled = false;
@@ -782,6 +800,14 @@
       });
     } else {
       reflectionWarningEl.hidden = true;
+    }
+
+    // 白・シルバー・パール系の判定信頼性低下警告(判定結果=verdictとは別枠、強調表示)
+    if (data.lowReliabilityWarning) {
+      lowReliabilityWarningEl.hidden = false;
+      lowReliabilityWarningEl.textContent = '⚠ ' + data.lowReliabilityWarning;
+    } else {
+      lowReliabilityWarningEl.hidden = true;
     }
 
     resultSummaryEl.hidden = false;

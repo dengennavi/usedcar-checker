@@ -1,0 +1,4 @@
+AuthType Basic
+AuthName "usedcar-checker admin"
+AuthUserFile /var/www/html/usedcar-checker/.htpasswd
+Require valid-user

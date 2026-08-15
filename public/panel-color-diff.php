@@ -275,6 +275,72 @@
   .product-recommendation a {
     color: #0a7cff;
   }
+  .feedback-section {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid #e5e5ea;
+  }
+  .feedback-question {
+    font-size: 0.85rem;
+    color: #444;
+    margin: 0 0 8px;
+  }
+  .feedback-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .feedback-buttons button {
+    flex: 1;
+    padding: 9px 8px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+  .feedback-buttons button.selected {
+    background: #0a7cff;
+    border-color: #0a7cff;
+    color: #fff;
+  }
+  .feedback-buttons button:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+  .feedback-thanks {
+    font-size: 0.78rem;
+    color: #1c6b3a;
+    margin: 4px 0 0;
+  }
+  .feedback-freetext {
+    margin-top: 14px;
+  }
+  .freetext-label {
+    display: block;
+    font-size: 0.78rem;
+    color: #555;
+    line-height: 1.5;
+    margin: 0 0 6px;
+  }
+  #feedbackFreeText {
+    width: 100%;
+    resize: vertical;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-family: inherit;
+    margin-bottom: 6px;
+  }
+  #feedbackFreeTextSubmitBtn {
+    padding: 8px 16px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #f2f2f4;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -356,6 +422,26 @@
       <p class="product-recommendation" id="productRecommendation" hidden>
         より確実に判断したい場合は、市販の<a href="#" id="productRecommendationLink">磁石式膜厚計・チップテスター</a>で直接触って確認することをおすすめします。
       </p>
+
+      <div class="feedback-section" id="feedbackSection" hidden>
+        <p class="feedback-question">この判定は参考になりましたか？（任意）</p>
+        <div class="feedback-buttons">
+          <button type="button" id="feedbackHelpfulBtn" data-value="helpful">参考になった</button>
+          <button type="button" id="feedbackNotHelpfulBtn" data-value="not_helpful">あまり参考にならなかった</button>
+        </div>
+        <p class="feedback-thanks" id="feedbackThanks" hidden>フィードバックありがとうございました。</p>
+
+        <div class="feedback-freetext">
+          <label class="freetext-label" for="feedbackFreeText">
+            もし後日、修復歴の有無が判明しましたら（販売店の書面、膜厚計での確認など）、下記にご記入いただけると精度向上の参考になります。（任意）
+          </label>
+          <textarea id="feedbackFreeText" rows="3" placeholder="例: 販売店の説明書に「右フロントフェンダー修復歴あり」と記載されていた、など"></textarea>
+          <div>
+            <button type="button" id="feedbackFreeTextSubmitBtn">送信</button>
+          </div>
+          <p class="feedback-thanks" id="feedbackFreeTextThanks" hidden>ご記入ありがとうございました。</p>
+        </div>
+      </div>
     </div>
     <details id="rawResult" hidden>
       <summary>詳細データ(JSON)を表示</summary>
@@ -434,6 +520,88 @@
   const swatchB = document.getElementById('swatchB');
   const rgbAEl = document.getElementById('rgbA');
   const rgbBEl = document.getElementById('rgbB');
+
+  // 匿名フィードバック(判定のたびに自動ログ + 任意の主観フィードバック/自由記述)
+  const feedbackSectionEl = document.getElementById('feedbackSection');
+  const feedbackHelpfulBtn = document.getElementById('feedbackHelpfulBtn');
+  const feedbackNotHelpfulBtn = document.getElementById('feedbackNotHelpfulBtn');
+  const feedbackThanksEl = document.getElementById('feedbackThanks');
+  const feedbackFreeTextEl = document.getElementById('feedbackFreeText');
+  const feedbackFreeTextSubmitBtn = document.getElementById('feedbackFreeTextSubmitBtn');
+  const feedbackFreeTextThanksEl = document.getElementById('feedbackFreeTextThanks');
+  let currentFeedbackToken = null; // log-result.phpが発行する、このログ行だけを指す使い捨てトークン
+
+  function resetFeedbackUi() {
+    currentFeedbackToken = null;
+    feedbackSectionEl.hidden = true;
+    feedbackThanksEl.hidden = true;
+    feedbackFreeTextThanksEl.hidden = true;
+    feedbackFreeTextEl.value = '';
+    feedbackHelpfulBtn.disabled = false;
+    feedbackNotHelpfulBtn.disabled = false;
+    feedbackHelpfulBtn.classList.remove('selected');
+    feedbackNotHelpfulBtn.classList.remove('selected');
+  }
+
+  async function logResultAndShowFeedback(data) {
+    try {
+      const res = await fetch('api/log-result.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          verdict: data.verdict,
+          deltaAb: data.deltaAb,
+          deltaE: data.deltaE,
+          lowReliabilityWarning: !!data.lowReliabilityWarning
+        })
+      });
+      const logData = await res.json();
+      if (logData.ok) {
+        currentFeedbackToken = logData.token;
+        feedbackSectionEl.hidden = false;
+      }
+    } catch (e) {
+      // 匿名ログの送信に失敗しても、判定結果の表示自体には影響させない
+    }
+  }
+
+  function submitSubjectiveFeedback(value, clickedBtn) {
+    if (!currentFeedbackToken) return;
+    feedbackHelpfulBtn.disabled = true;
+    feedbackNotHelpfulBtn.disabled = true;
+    clickedBtn.classList.add('selected');
+    feedbackThanksEl.hidden = false;
+
+    fetch('api/submit-feedback.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: currentFeedbackToken, subjectiveFeedback: value })
+    }).catch(function () {
+      // 送信に失敗してもUI上は完了扱いのままにする(再送の仕組みは試作段階では省略)
+    });
+  }
+
+  feedbackHelpfulBtn.addEventListener('click', function () {
+    submitSubjectiveFeedback('helpful', feedbackHelpfulBtn);
+  });
+  feedbackNotHelpfulBtn.addEventListener('click', function () {
+    submitSubjectiveFeedback('not_helpful', feedbackNotHelpfulBtn);
+  });
+
+  feedbackFreeTextSubmitBtn.addEventListener('click', function () {
+    if (!currentFeedbackToken) return;
+    const text = feedbackFreeTextEl.value.trim();
+    if (!text) return;
+
+    feedbackFreeTextThanksEl.hidden = false;
+    fetch('api/submit-feedback.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: currentFeedbackToken, freeText: text })
+    }).catch(function () {
+      // 送信に失敗してもUI上は完了扱いのままにする(再送の仕組みは試作段階では省略)
+    });
+  });
   const heatmapToggleEl = document.getElementById('heatmapToggle');
   const heatmapStatusEl = document.getElementById('heatmapStatus');
 
@@ -533,6 +701,7 @@
     reflectionWarningEl.hidden = true;
     lowReliabilityWarningEl.hidden = true;
     productRecommendationEl.hidden = true;
+    resetFeedbackUi();
     canvasWrap.hidden = false;
 
     heatmapTiles = [];
@@ -732,6 +901,7 @@
     reflectionWarningEl.hidden = true;
     lowReliabilityWarningEl.hidden = true;
     productRecommendationEl.hidden = true;
+    resetFeedbackUi();
     redraw();
   });
 
@@ -791,6 +961,7 @@
     reflectionWarningEl.hidden = true;
     lowReliabilityWarningEl.hidden = true;
     productRecommendationEl.hidden = true;
+    resetFeedbackUi();
 
     const formData = new FormData();
     formData.append('photo', currentFile);
@@ -859,6 +1030,11 @@
     productRecommendationEl.hidden = !(data.verdict === 'caution' || data.verdict === 'repaint_suspected');
     valAEl.textContent = formatPanelValue(data.panelA);
     valBEl.textContent = formatPanelValue(data.panelB);
+
+    // 判定が出るたびに匿名の利用ログを自動送信する(ユーザーへの質問なし)。
+    // 成功すると主観フィードバック/自由記述の入力欄が使えるようになる。
+    resetFeedbackUi();
+    logResultAndShowFeedback(data);
   }
 
   function formatPanelValue(panel) {

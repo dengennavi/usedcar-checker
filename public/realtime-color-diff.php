@@ -207,7 +207,7 @@
 <script>
 (function () {
   const PROC_MAX_WIDTH = 240;   // 実処理用に縮小するcanvasの最大幅(px)。負荷対策。
-  const TILE_SIZE = 20;         // procCanvas座標系でのタイルサイズ(px)
+  const TILE_SIZE = 15;         // procCanvas座標系でのタイルサイズ(px)。境界の精密さ・小さな異常の見逃し防止のため縮小(元20px)。タイル数が増える分、負荷が気になる場合はPROCESS_INTERVAL_MSを300ms寄りに、それでも重ければPROC_MAX_WIDTHを下げて調整する。
   const SAMPLE_STRIDE = 2;      // タイル内サンプリング間隔(px)
   const PROCESS_INTERVAL_MS = 250; // 0.2〜0.3秒ごとに再判定
   const DELTA_AB_THRESHOLD = 2.0;  // panel-color-diff.phpのバックエンドと同じ暫定閾値

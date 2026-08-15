@@ -108,13 +108,58 @@
     cursor: not-allowed;
   }
   #result {
-    margin-top: 12px;
+    margin-top: 8px;
     background: #1c1c1e;
     color: #d4ffb2;
     padding: 12px;
     border-radius: 8px;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     overflow-x: auto;
+  }
+  #resultSummary {
+    margin-top: 16px;
+    padding: 16px;
+    border-radius: 10px;
+    border: 2px solid transparent;
+  }
+  #resultSummary.verdict-repaint_suspected {
+    background: #fdecea;
+    border-color: #ff3b30;
+    color: #86211a;
+  }
+  #resultSummary.verdict-caution {
+    background: #fff8e5;
+    border-color: #e8a400;
+    color: #6b4e00;
+  }
+  #resultSummary.verdict-ok {
+    background: #eafaf0;
+    border-color: #34a853;
+    color: #1c6b3a;
+  }
+  #resultSummary .verdict-title {
+    font-size: 1.05rem;
+    font-weight: bold;
+    margin: 0 0 4px;
+  }
+  #resultSummary .verdict-de {
+    font-size: 0.85rem;
+    margin: 0 0 8px;
+    opacity: 0.85;
+  }
+  #resultSummary .panel-values {
+    display: flex;
+    gap: 16px;
+    font-size: 0.8rem;
+    flex-wrap: wrap;
+  }
+  details#rawResult {
+    margin-top: 8px;
+  }
+  details#rawResult summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: #555;
   }
 </style>
 </head>
@@ -147,8 +192,20 @@
       <div class="swatch-item"><span class="swatch" id="swatchB"></span>パネルB: <span id="rgbB">未選択</span></div>
     </div>
 
-    <button type="button" id="submitBtn" disabled>判定する（GD/ΔE2000判定は次のステップ）</button>
-    <pre id="result" hidden></pre>
+    <button type="button" id="submitBtn" disabled>判定する</button>
+
+    <div id="resultSummary" hidden>
+      <p class="verdict-title" id="verdictTitle"></p>
+      <p class="verdict-de" id="verdictDe"></p>
+      <div class="panel-values">
+        <div>パネルA: <span id="valA"></span></div>
+        <div>パネルB: <span id="valB"></span></div>
+      </div>
+    </div>
+    <details id="rawResult" hidden>
+      <summary>詳細データ(JSON)を表示</summary>
+      <pre id="result"></pre>
+    </details>
   </div>
 </div>
 
@@ -165,6 +222,12 @@
   const resetBtn = document.getElementById('resetBtn');
   const submitBtn = document.getElementById('submitBtn');
   const resultEl = document.getElementById('result');
+  const rawResultEl = document.getElementById('rawResult');
+  const resultSummaryEl = document.getElementById('resultSummary');
+  const verdictTitleEl = document.getElementById('verdictTitle');
+  const verdictDeEl = document.getElementById('verdictDe');
+  const valAEl = document.getElementById('valA');
+  const valBEl = document.getElementById('valB');
   const swatchA = document.getElementById('swatchA');
   const swatchB = document.getElementById('swatchB');
   const rgbAEl = document.getElementById('rgbA');
@@ -175,6 +238,7 @@
   const imgCtx = imgCanvas.getContext('2d');
 
   let img = new Image();
+  let currentFile = null; // サーバーへ送る元ファイル(File)
   let scale = 1; // 元画像px * scale = canvas表示px
   let mode = 'A';
   let rects = { A: null, B: null }; // 元画像ピクセル座標 {x,y,w,h}
@@ -185,6 +249,7 @@
   photoInput.addEventListener('change', function (e) {
     const file = e.target.files[0];
     if (!file) return;
+    currentFile = file;
     const reader = new FileReader();
     reader.onload = function (ev) {
       img = new Image();
@@ -211,7 +276,8 @@
     updateModeButtons();
     updateSwatches();
     submitBtn.disabled = true;
-    resultEl.hidden = true;
+    resultSummaryEl.hidden = true;
+    rawResultEl.hidden = true;
     canvasWrap.hidden = false;
     redraw();
   }
@@ -333,7 +399,8 @@
     updateModeButtons();
     updateSwatches();
     submitBtn.disabled = true;
-    resultEl.hidden = true;
+    resultSummaryEl.hidden = true;
+    rawResultEl.hidden = true;
     redraw();
   });
 
@@ -377,16 +444,67 @@
     }
   }
 
-  submitBtn.addEventListener('click', function () {
-    // Step 2: PHP(GD)側でのΔE2000判定は次のステップで実装。
-    // ここでは元画像ピクセル座標での矩形選択が正しく取得できることを確認する。
-    resultEl.hidden = false;
-    resultEl.textContent = JSON.stringify({
-      imageSize: { w: img.naturalWidth, h: img.naturalHeight },
-      panelA: rects.A,
-      panelB: rects.B
-    }, null, 2);
+  const VERDICT_LABELS = {
+    repaint_suspected: '再塗装の可能性あり',
+    caution: '要注意（わずかな色差）',
+    ok: '明確な色差は検出されませんでした'
+  };
+
+  submitBtn.addEventListener('click', async function () {
+    if (!currentFile || !rects.A || !rects.B) return;
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '判定中...';
+    resultSummaryEl.hidden = true;
+    rawResultEl.hidden = true;
+
+    const formData = new FormData();
+    formData.append('photo', currentFile);
+    formData.append('rectA', JSON.stringify(rects.A));
+    formData.append('rectB', JSON.stringify(rects.B));
+
+    try {
+      const res = await fetch('api/panel-color-diff-analyze.php', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        resultSummaryEl.hidden = false;
+        resultSummaryEl.className = 'verdict-caution';
+        verdictTitleEl.textContent = 'エラー';
+        verdictDeEl.textContent = data.error || ('HTTPエラー: ' + res.status);
+        valAEl.textContent = '';
+        valBEl.textContent = '';
+      } else {
+        renderResult(data);
+      }
+
+      rawResultEl.hidden = false;
+      resultEl.textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+      resultSummaryEl.hidden = false;
+      resultSummaryEl.className = 'verdict-caution';
+      verdictTitleEl.textContent = '通信エラー';
+      verdictDeEl.textContent = String(err);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '判定する';
+    }
   });
+
+  function renderResult(data) {
+    resultSummaryEl.hidden = false;
+    resultSummaryEl.className = 'verdict-' + data.verdict;
+    verdictTitleEl.textContent = VERDICT_LABELS[data.verdict] || data.message;
+    verdictDeEl.textContent = 'ΔE2000 = ' + data.deltaE.toFixed(2) + '（閾値: ' + data.threshold.toFixed(1) + '） / ' + data.message;
+    valAEl.textContent = formatPanelValue(data.panelA);
+    valBEl.textContent = formatPanelValue(data.panelB);
+  }
+
+  function formatPanelValue(panel) {
+    const [r, g, b] = panel.rgb;
+    const [L, a, bLab] = panel.lab;
+    return 'RGB(' + r + ',' + g + ',' + b + ') / Lab(' + L + ',' + a + ',' + bLab + ')';
+  }
 })();
 </script>
 </body>

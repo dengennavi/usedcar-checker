@@ -1,6 +1,9 @@
 <?php
-// ④パネル色差判定 - リアルタイム試作
-// カメラ映像に対してタイルごとのΔab判定を継続的に重ね描きする。
+// ④パネル色差判定 - リアルタイム試作(自動基準色版)
+// タップで基準色を指定するのではなく、画面内タイルの色の中央値(=多数派の色)を
+// フレームごとに動的に算出して基準色とし、そこから大きく外れたタイルだけを
+// ハイライトする「懐中電灯」的な使い方を想定。
+// 気になる箇所は静止画として撮影し、panel-color-diff.php(2点比較機能)へ引き継ぐ。
 // 精度検証より「動くかどうか」の確認を優先した試作段階の実装。
 // (中央値サンプリング・Lab変換・Δabの考え方はpanel-color-diff.php/backend/ColorDiff.phpと共通)
 ?>
@@ -76,7 +79,6 @@
     left: 0;
     width: 100%;
     height: 100%;
-    touch-action: none;
   }
   .controls {
     margin-top: 12px;
@@ -88,38 +90,15 @@
   .hint-text {
     font-size: 0.85rem;
     color: #555;
-    margin: 0 0 8px;
-  }
-  .ref-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    font-size: 0.8rem;
     margin: 0 0 10px;
+    line-height: 1.5;
   }
-  .ref-swatch {
-    width: 22px;
-    height: 22px;
-    border-radius: 4px;
-    border: 1px solid #ccc;
-    display: inline-block;
-  }
-  .ref-info button, #stopCameraBtn {
-    padding: 8px 14px;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    background: #f2f2f4;
-    font-size: 0.8rem;
-    cursor: pointer;
-  }
-  #stopCameraBtn { width: 100%; margin-top: 4px; }
   .legend {
     display: flex;
     gap: 14px;
     font-size: 0.75rem;
     color: #555;
-    margin-top: 10px;
+    margin-bottom: 12px;
   }
   .legend span.dot {
     display: inline-block;
@@ -128,6 +107,31 @@
     border-radius: 2px;
     margin-right: 4px;
     vertical-align: middle;
+  }
+  #investigateBtn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    background: #ff3b30;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  #investigateBtn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+  }
+  #stopCameraBtn {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: #f2f2f4;
+    font-size: 0.85rem;
+    cursor: pointer;
   }
 </style>
 </head>
@@ -151,17 +155,14 @@
   </div>
 
   <div class="controls" id="controls" hidden>
-    <p class="hint-text" id="refHint">中央のマーカーに塗装面を合わせ、画面をタップして基準色を登録してください。</p>
-    <div class="ref-info" id="refInfo" hidden>
-      <span>基準色:</span>
-      <span class="ref-swatch" id="refSwatch"></span>
-      <span id="refValues"></span>
-      <button type="button" id="clearRefBtn">基準色をクリア</button>
-    </div>
+    <p class="hint-text">
+      画面に映る範囲の中で最も多い色を自動的に基準色とし、そこから大きく外れた場所だけを赤くハイライトします。
+      車体に沿ってゆっくりカメラを動かしてください。気になる箇所が見つかったら撮影して詳しく調べられます。
+    </p>
     <div class="legend">
-      <span><span class="dot" style="background:rgba(40,200,80,0.9)"></span>基準色に近い</span>
-      <span><span class="dot" style="background:rgba(255,50,40,0.9)"></span>差が大きい</span>
+      <span><span class="dot" style="background:rgba(255,40,30,0.9)"></span>周囲と異なる色（要確認）</span>
     </div>
+    <button type="button" id="investigateBtn" disabled>この場所を詳しく調べる（撮影する）</button>
     <button type="button" id="stopCameraBtn">カメラを停止</button>
   </div>
 </div>
@@ -173,38 +174,29 @@
   const SAMPLE_STRIDE = 2;      // タイル内サンプリング間隔(px)
   const PROCESS_INTERVAL_MS = 250; // 0.2〜0.3秒ごとに再判定
   const DELTA_AB_THRESHOLD = 2.0;  // panel-color-diff.phpのバックエンドと同じ暫定閾値
-  const REF_BOX_SIZE = 30;      // 基準色サンプリング範囲(procCanvas座標系, px)
+  const HANDOFF_STORAGE_KEY = 'usedcarChecker.realtimeHandoffPhoto';
 
   const videoEl = document.getElementById('video');
   const overlayCanvas = document.getElementById('overlayCanvas');
   const overlayCtx = overlayCanvas.getContext('2d');
   const startCameraBtn = document.getElementById('startCameraBtn');
   const stopCameraBtn = document.getElementById('stopCameraBtn');
+  const investigateBtn = document.getElementById('investigateBtn');
   const cameraStatusEl = document.getElementById('cameraStatus');
   const startStepEl = document.getElementById('startStep');
   const videoWrapEl = document.getElementById('videoWrap');
   const controlsEl = document.getElementById('controls');
-  const refHintEl = document.getElementById('refHint');
-  const refInfoEl = document.getElementById('refInfo');
-  const refSwatchEl = document.getElementById('refSwatch');
-  const refValuesEl = document.getElementById('refValues');
-  const clearRefBtn = document.getElementById('clearRefBtn');
 
   // 実処理(中央値サンプリング等)はオフスクリーンの縮小canvas上で行う
   const procCanvas = document.createElement('canvas');
   const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
 
   let stream = null;
-  let referenceLab = null; // [L, a, b]
   let processTimer = null;
 
   startCameraBtn.addEventListener('click', startCamera);
   stopCameraBtn.addEventListener('click', stopCamera);
-  clearRefBtn.addEventListener('click', function () {
-    referenceLab = null;
-    refInfoEl.hidden = true;
-    refHintEl.hidden = false;
-  });
+  investigateBtn.addEventListener('click', captureAndHandoff);
 
   async function startCamera() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -239,6 +231,7 @@
     startStepEl.hidden = true;
     videoWrapEl.hidden = false;
     controlsEl.hidden = false;
+    investigateBtn.disabled = false;
     cameraStatusEl.textContent = '';
 
     if (processTimer) clearInterval(processTimer);
@@ -255,9 +248,7 @@
       stream = null;
     }
     videoEl.srcObject = null;
-    referenceLab = null;
-    refInfoEl.hidden = true;
-    refHintEl.hidden = false;
+    investigateBtn.disabled = true;
     videoWrapEl.hidden = true;
     controlsEl.hidden = true;
     startStepEl.hidden = false;
@@ -289,86 +280,82 @@
     if (!videoWrapEl.hidden) syncOverlaySize();
   });
 
-  overlayCanvas.addEventListener('click', onTap);
-  overlayCanvas.addEventListener('touchend', function (e) {
-    e.preventDefault();
-    onTap();
-  });
-
-  function onTap() {
-    if (!procCanvas.width || videoEl.readyState < 2) return;
-
-    procCtx.drawImage(videoEl, 0, 0, procCanvas.width, procCanvas.height);
-    const boxX = Math.round(procCanvas.width / 2 - REF_BOX_SIZE / 2);
-    const boxY = Math.round(procCanvas.height / 2 - REF_BOX_SIZE / 2);
-    const boxData = procCtx.getImageData(boxX, boxY, REF_BOX_SIZE, REF_BOX_SIZE).data;
-    const rgb = medianRgbOfTile(boxData, REF_BOX_SIZE, 0, 0, REF_BOX_SIZE, REF_BOX_SIZE);
-    referenceLab = srgbToLab(rgb[0], rgb[1], rgb[2]);
-
-    refInfoEl.hidden = false;
-    refHintEl.hidden = true;
-    const rr = Math.round(rgb[0]), rg = Math.round(rgb[1]), rb = Math.round(rgb[2]);
-    refSwatchEl.style.background = 'rgb(' + rr + ',' + rg + ',' + rb + ')';
-    refValuesEl.textContent = 'RGB(' + rr + ',' + rg + ',' + rb + ') Lab(' +
-      referenceLab[0].toFixed(1) + ',' + referenceLab[1].toFixed(1) + ',' + referenceLab[2].toFixed(1) + ')';
-  }
-
   function processFrame() {
     if (!procCanvas.width || videoEl.readyState < 2) return;
 
     procCtx.drawImage(videoEl, 0, 0, procCanvas.width, procCanvas.height);
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-    if (referenceLab) {
-      drawTileGrid();
-    }
-    drawCrosshair();
+    const tiles = computeTiles();
+    if (tiles.length === 0) return;
+
+    // その瞬間の画面内タイルの色の中央値(=多数派の色)を動的な基準色とする
+    const refA = median(tiles.map(function (t) { return t.lab[1]; }));
+    const refB = median(tiles.map(function (t) { return t.lab[2]; }));
+    const referenceLab = [0, refA, refB]; // Lは判定に使わないのでダミー
+
+    highlightOutlierTiles(tiles, referenceLab);
   }
 
-  function drawTileGrid() {
+  function computeTiles() {
     const pw = procCanvas.width;
     const ph = procCanvas.height;
     const data = procCtx.getImageData(0, 0, pw, ph).data;
-    const scaleX = overlayCanvas.width / pw;
-    const scaleY = overlayCanvas.height / ph;
 
-    overlayCtx.save();
+    const tiles = [];
     for (let ty = 0; ty < ph; ty += TILE_SIZE) {
       const tileH = Math.min(TILE_SIZE, ph - ty);
       for (let tx = 0; tx < pw; tx += TILE_SIZE) {
         const tileW = Math.min(TILE_SIZE, pw - tx);
         const rgb = medianRgbOfTile(data, pw, tx, ty, tileW, tileH);
         const lab = srgbToLab(rgb[0], rgb[1], rgb[2]);
-        const dAb = deltaAb(referenceLab, lab);
-        const isDiff = dAb >= DELTA_AB_THRESHOLD;
-        overlayCtx.fillStyle = isDiff ? 'rgba(255,50,40,0.4)' : 'rgba(40,200,80,0.28)';
-        overlayCtx.fillRect(tx * scaleX, ty * scaleY, tileW * scaleX, tileH * scaleY);
+        tiles.push({ x: tx, y: ty, w: tileW, h: tileH, lab: lab });
       }
     }
+    return tiles;
+  }
+
+  function highlightOutlierTiles(tiles, referenceLab) {
+    const pw = procCanvas.width;
+    const ph = procCanvas.height;
+    const scaleX = overlayCanvas.width / pw;
+    const scaleY = overlayCanvas.height / ph;
+
+    overlayCtx.save();
+    tiles.forEach(function (tile) {
+      const dAb = deltaAb(referenceLab, tile.lab);
+      if (dAb < DELTA_AB_THRESHOLD) return; // 基準色に近いタイルは何も描かない(見た目そのまま)
+
+      const rx = tile.x * scaleX;
+      const ry = tile.y * scaleY;
+      const rw = tile.w * scaleX;
+      const rh = tile.h * scaleY;
+      overlayCtx.fillStyle = 'rgba(255,40,30,0.45)';
+      overlayCtx.fillRect(rx, ry, rw, rh);
+      overlayCtx.strokeStyle = 'rgba(255,255,255,0.8)';
+      overlayCtx.lineWidth = 1;
+      overlayCtx.strokeRect(rx, ry, rw, rh);
+    });
     overlayCtx.restore();
   }
 
-  function drawCrosshair() {
-    const cx = overlayCanvas.width / 2;
-    const cy = overlayCanvas.height / 2;
-    const size = 26;
-    overlayCtx.save();
-    overlayCtx.strokeStyle = '#fff';
-    overlayCtx.lineWidth = 2;
-    overlayCtx.shadowColor = 'rgba(0,0,0,0.7)';
-    overlayCtx.shadowBlur = 3;
-    overlayCtx.strokeRect(cx - size / 2, cy - size / 2, size, size);
-    overlayCtx.beginPath();
-    overlayCtx.moveTo(cx - size / 2 - 6, cy);
-    overlayCtx.lineTo(cx - size / 2, cy);
-    overlayCtx.moveTo(cx + size / 2, cy);
-    overlayCtx.lineTo(cx + size / 2 + 6, cy);
-    overlayCtx.moveTo(cx, cy - size / 2 - 6);
-    overlayCtx.lineTo(cx, cy - size / 2);
-    overlayCtx.moveTo(cx, cy + size / 2);
-    overlayCtx.lineTo(cx, cy + size / 2 + 6);
-    overlayCtx.stroke();
-    overlayCtx.restore();
+  function captureAndHandoff() {
+    if (!stream || videoEl.readyState < 2) return;
+
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width = videoEl.videoWidth;
+    captureCanvas.height = videoEl.videoHeight;
+    captureCanvas.getContext('2d').drawImage(videoEl, 0, 0, captureCanvas.width, captureCanvas.height);
+    const dataUrl = captureCanvas.toDataURL('image/jpeg', 0.92);
+
+    try {
+      sessionStorage.setItem(HANDOFF_STORAGE_KEY, dataUrl);
+    } catch (err) {
+      cameraStatusEl.textContent = '写真の受け渡しに失敗しました: ' + err.message;
+      return;
+    }
+
+    window.location.href = 'panel-color-diff.php?from=realtime';
   }
 
   // --- 既存ロジック(panel-color-diff.php/backend/ColorDiff.php)の考え方を流用 ---

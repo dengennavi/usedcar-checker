@@ -305,6 +305,9 @@
   </div>
 
   <div class="canvas-wrap" id="canvasWrap" hidden>
+    <p class="selection-guidance" id="handoffNotice" hidden>
+      リアルタイム検知から引き継いだ写真です。気になる箇所と、比較用のフラットな箇所の2点を矩形で選択してください。
+    </p>
     <p class="selection-guidance">
       空や周囲の景色が映り込んでいない、フラットに見える塗装面を選んでください（ボンネットの端やドアの中央付近がおすすめです）。
     </p>
@@ -387,10 +390,7 @@
   function unlockApp() {
     consentGateEl.hidden = true;
     appContentEl.hidden = false;
-  }
-
-  if (hasConsent()) {
-    unlockApp();
+    tryLoadHandoffPhoto();
   }
 
   consentCheckboxEl.addEventListener('change', function () {
@@ -408,6 +408,7 @@
 
   const photoInput = document.getElementById('photoInput');
   const canvasWrap = document.getElementById('canvasWrap');
+  const handoffNoticeEl = document.getElementById('handoffNotice');
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
   const modeAbtn = document.getElementById('modeA');
@@ -462,6 +463,7 @@
     const file = e.target.files[0];
     if (!file) return;
     currentFile = file;
+    handoffNoticeEl.hidden = true;
     const reader = new FileReader();
     reader.onload = function (ev) {
       img = new Image();
@@ -470,6 +472,44 @@
     };
     reader.readAsDataURL(file);
   });
+
+  // リアルタイム検知(realtime-color-diff.php)から撮影写真を引き継いだ場合、
+  // sessionStorageに置かれたdataURLを読み込んでファイル選択済みの状態にする。
+  const HANDOFF_STORAGE_KEY = 'usedcarChecker.realtimeHandoffPhoto';
+
+  function tryLoadHandoffPhoto() {
+    let dataUrl = null;
+    try {
+      dataUrl = sessionStorage.getItem(HANDOFF_STORAGE_KEY);
+    } catch (e) {
+      return;
+    }
+    if (!dataUrl) return;
+
+    try {
+      sessionStorage.removeItem(HANDOFF_STORAGE_KEY);
+    } catch (e) {
+      // 削除に失敗しても致命的ではないため続行
+    }
+
+    handoffNoticeEl.hidden = false;
+
+    dataUrlToFile(dataUrl, 'realtime-capture.jpg').then(function (file) {
+      currentFile = file;
+    }).catch(function () {
+      // Fileへの変換に失敗しても、画像表示自体はdataURLで進められるので握りつぶす
+    });
+
+    img = new Image();
+    img.onload = setupCanvas;
+    img.src = dataUrl;
+  }
+
+  function dataUrlToFile(dataUrl, filename) {
+    return fetch(dataUrl)
+      .then(function (res) { return res.blob(); })
+      .then(function (blob) { return new File([blob], filename, { type: blob.type || 'image/jpeg' }); });
+  }
 
   function setupCanvas() {
     const displayWidth = Math.min(img.naturalWidth, MAX_CANVAS_WIDTH);
@@ -825,6 +865,12 @@
     const [r, g, b] = panel.rgb;
     const [L, a, bLab] = panel.lab;
     return 'RGB(' + r + ',' + g + ',' + b + ') / Lab(' + L + ',' + a + ',' + bLab + ')';
+  }
+
+  // 同意済みなら即座にアプリを開放する。unlockApp()がtryLoadHandoffPhoto()経由で
+  // img/currentFile/setupCanvasを参照するため、それらの宣言より後(スクリプト末尾)で呼ぶ必要がある。
+  if (hasConsent()) {
+    unlockApp();
   }
 })();
 </script>

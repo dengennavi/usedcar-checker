@@ -213,6 +213,57 @@
     font-size: 0.8rem;
     color: #555;
   }
+  .consent-gate {
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  .consent-text {
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: #333;
+    margin: 0 0 16px;
+  }
+  .consent-checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.9rem;
+    margin-bottom: 16px;
+    cursor: pointer;
+  }
+  .consent-checkbox input {
+    margin-top: 3px;
+  }
+  #consentAgreeBtn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    background: #0a7cff;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  #consentAgreeBtn:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+  }
+  .product-recommendation {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: #f2f2f4;
+    border: 1px solid #ddd;
+    color: #333;
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .product-recommendation a {
+    color: #0a7cff;
+  }
 </style>
 </head>
 <body>
@@ -223,6 +274,18 @@
     それぞれの範囲を矩形で囲んでください。フラッシュはOFF、直射日光の反射を避けて撮影したものを使ってください。
   </p>
 
+  <div class="consent-gate" id="consentGate">
+    <p class="consent-text">
+      このアプリの判定結果は参考情報です。最終的な購入判断は、専門家による点検やご自身の目視確認と合わせて行ってください。
+    </p>
+    <label class="consent-checkbox">
+      <input type="checkbox" id="consentCheckbox">
+      内容を理解し、同意します
+    </label>
+    <button type="button" id="consentAgreeBtn" disabled>同意して利用を開始する</button>
+  </div>
+
+  <div id="appContent" hidden>
   <div class="step">
     <label class="file-btn">
       写真を選択
@@ -272,17 +335,61 @@
         <div>パネルA: <span id="valA"></span></div>
         <div>パネルB: <span id="valB"></span></div>
       </div>
+      <p class="product-recommendation" id="productRecommendation" hidden>
+        より確実に判断したい場合は、市販の<a href="#" id="productRecommendationLink">磁石式膜厚計・チップテスター</a>で直接触って確認することをおすすめします。
+      </p>
     </div>
     <details id="rawResult" hidden>
       <summary>詳細データ(JSON)を表示</summary>
       <pre id="result"></pre>
     </details>
   </div>
+  </div>
 </div>
 
 <script>
 (function () {
   const MAX_CANVAS_WIDTH = 900;
+
+  // 初回利用時の同意ゲート。同意するまで機能(写真アップロード以降)を使わせない。
+  // 一度同意すればlocalStorageに記録し、次回以降は省略する。
+  // 文言を変更した場合は再同意を求めたいのでキーにバージョンを付けている。
+  const CONSENT_STORAGE_KEY = 'usedcarChecker.panelColorDiff.consent.v1';
+  const consentGateEl = document.getElementById('consentGate');
+  const appContentEl = document.getElementById('appContent');
+  const consentCheckboxEl = document.getElementById('consentCheckbox');
+  const consentAgreeBtnEl = document.getElementById('consentAgreeBtn');
+
+  function hasConsent() {
+    try {
+      return localStorage.getItem(CONSENT_STORAGE_KEY) === '1';
+    } catch (e) {
+      // プライベートブラウジング等でlocalStorageが使えない場合は毎回同意を求める
+      return false;
+    }
+  }
+
+  function unlockApp() {
+    consentGateEl.hidden = true;
+    appContentEl.hidden = false;
+  }
+
+  if (hasConsent()) {
+    unlockApp();
+  }
+
+  consentCheckboxEl.addEventListener('change', function () {
+    consentAgreeBtnEl.disabled = !consentCheckboxEl.checked;
+  });
+
+  consentAgreeBtnEl.addEventListener('click', function () {
+    try {
+      localStorage.setItem(CONSENT_STORAGE_KEY, '1');
+    } catch (e) {
+      // 保存に失敗しても今回の利用自体は継続させる(次回また同意を求めるだけ)
+    }
+    unlockApp();
+  });
 
   const photoInput = document.getElementById('photoInput');
   const canvasWrap = document.getElementById('canvasWrap');
@@ -300,6 +407,12 @@
   const verdictDeEl = document.getElementById('verdictDe');
   const valAEl = document.getElementById('valA');
   const valBEl = document.getElementById('valB');
+  const productRecommendationEl = document.getElementById('productRecommendation');
+  const productRecommendationLinkEl = document.getElementById('productRecommendationLink');
+  // TODO: 推奨商品(磁石式膜厚計・チップテスター)のリンク先が決まったらhrefを設定する
+  productRecommendationLinkEl.addEventListener('click', function (e) {
+    e.preventDefault();
+  });
   const swatchA = document.getElementById('swatchA');
   const swatchB = document.getElementById('swatchB');
   const rgbAEl = document.getElementById('rgbA');
@@ -362,6 +475,7 @@
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
+    productRecommendationEl.hidden = true;
     canvasWrap.hidden = false;
 
     heatmapTiles = [];
@@ -559,6 +673,7 @@
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
+    productRecommendationEl.hidden = true;
     redraw();
   });
 
@@ -616,6 +731,7 @@
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
     reflectionWarningEl.hidden = true;
+    productRecommendationEl.hidden = true;
 
     const formData = new FormData();
     formData.append('photo', currentFile);
@@ -633,6 +749,7 @@
         verdictDeEl.textContent = data.error || ('HTTPエラー: ' + res.status);
         valAEl.textContent = '';
         valBEl.textContent = '';
+        productRecommendationEl.hidden = true;
       } else {
         renderResult(data);
       }
@@ -644,6 +761,7 @@
       resultSummaryEl.className = 'verdict-caution';
       verdictTitleEl.textContent = '通信エラー';
       verdictDeEl.textContent = String(err);
+      productRecommendationEl.hidden = true;
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = '判定する';
@@ -668,6 +786,8 @@
     verdictTitleEl.textContent = VERDICT_LABELS[data.verdict] || data.message;
     verdictDeEl.textContent = 'Δab(色相・彩度差) = ' + data.deltaAb.toFixed(2) + '（閾値: ' + data.threshold.toFixed(1) + '）'
       + ' / 参考ΔE2000 = ' + data.deltaE.toFixed(2) + ' / ' + data.message;
+    // 「要注意」「再塗装の可能性あり」の場合は、より確実な確認手段(膜厚計等)を案内する
+    productRecommendationEl.hidden = !(data.verdict === 'caution' || data.verdict === 'repaint_suspected');
     valAEl.textContent = formatPanelValue(data.panelA);
     valBEl.textContent = formatPanelValue(data.panelB);
   }

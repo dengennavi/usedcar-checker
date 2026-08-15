@@ -3,18 +3,23 @@ declare(strict_types=1);
 
 /**
  * ④パネル色差判定（再塗装検出）のコアロジック。
- * GD画像リソースからの矩形領域平均RGB抽出、sRGB→Lab変換、CIEDE2000(ΔE2000)計算。
+ * GD画像リソースからの矩形領域サンプリング、sRGB→Lab変換、CIEDE2000(ΔE2000)計算。
  */
 final class ColorDiff
 {
     /**
-     * 矩形領域内の平均RGBを算出する。
+     * 矩形領域から中央値RGBと明度(L*)のばらつき(標準偏差)を算出する。
      * 領域が大きい場合はストライドサンプリングして計算量を抑える。
      *
+     * 光沢塗装は周囲の空・建物を映り込ませ、矩形内の一部にのみ局所的な
+     * ハイライトが出ることがある。平均値だとこの外れ値に引っ張られるため、
+     * 外れ値に強い中央値を使う。あわせて明度の標準偏差を返すことで、
+     * 呼び出し側が「範囲内に映り込みが混ざっていないか」を判定できるようにする。
+     *
      * @param resource|\GdImage $im
-     * @return array{0:float,1:float,2:float} [r, g, b] (0-255)
+     * @return array{rgbMedian: array{0:float,1:float,2:float}, lStdDev: float, sampleCount: int}
      */
-    public static function averageRgbOfRegion($im, int $x, int $y, int $w, int $h, int $maxSamples = 10000): array
+    public static function sampleRegion($im, int $x, int $y, int $w, int $h, int $maxSamples = 10000): array
     {
         $imgW = imagesx($im);
         $imgH = imagesy($im);
@@ -31,25 +36,61 @@ final class ColorDiff
         $totalPixels = $w * $h;
         $stride = max(1, (int) floor(sqrt($totalPixels / $maxSamples)));
 
-        $rSum = 0;
-        $gSum = 0;
-        $bSum = 0;
-        $n = 0;
+        $rSamples = [];
+        $gSamples = [];
+        $bSamples = [];
+        $lSamples = [];
         for ($py = 0; $py < $h; $py += $stride) {
             for ($px = 0; $px < $w; $px += $stride) {
                 $rgb = imagecolorat($im, $x + $px, $y + $py);
-                $rSum += ($rgb >> 16) & 0xFF;
-                $gSum += ($rgb >> 8) & 0xFF;
-                $bSum += $rgb & 0xFF;
-                $n++;
+                $r = ($rgb >> 16) & 0xFF;
+                $g = ($rgb >> 8) & 0xFF;
+                $b = $rgb & 0xFF;
+                $rSamples[] = $r;
+                $gSamples[] = $g;
+                $bSamples[] = $b;
+                [$L, , ] = self::srgbToLab((float) $r, (float) $g, (float) $b);
+                $lSamples[] = $L;
             }
         }
 
-        if ($n === 0) {
+        if (empty($rSamples)) {
             throw new RuntimeException('サンプリング点が0件です');
         }
 
-        return [$rSum / $n, $gSum / $n, $bSum / $n];
+        return [
+            'rgbMedian' => [self::median($rSamples), self::median($gSamples), self::median($bSamples)],
+            'lStdDev' => self::stdDev($lSamples),
+            'sampleCount' => count($rSamples),
+        ];
+    }
+
+    /**
+     * @param array<int,float|int> $values
+     */
+    private static function median(array $values): float
+    {
+        sort($values);
+        $n = count($values);
+        $mid = intdiv($n, 2);
+        if ($n % 2 === 0) {
+            return ($values[$mid - 1] + $values[$mid]) / 2;
+        }
+        return (float) $values[$mid];
+    }
+
+    /**
+     * @param array<int,float> $values
+     */
+    private static function stdDev(array $values): float
+    {
+        $n = count($values);
+        if ($n <= 1) {
+            return 0.0;
+        }
+        $mean = array_sum($values) / $n;
+        $variance = array_sum(array_map(static fn($v) => ($v - $mean) ** 2, $values)) / $n;
+        return sqrt($variance);
     }
 
     /**

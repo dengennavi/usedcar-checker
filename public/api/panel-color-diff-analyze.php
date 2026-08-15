@@ -2,7 +2,9 @@
 declare(strict_types=1);
 
 // ④パネル色差判定（再塗装検出）
-// 写真 + パネルA/Bの矩形範囲を受け取り、平均RGB→Lab変換→Δab(a*b*平面距離)を計算して判定結果を返す。
+// 写真 + パネルA/Bの矩形範囲を受け取り、中央値RGB→Lab変換→Δab(a*b*平面距離)を計算して判定結果を返す。
+// 平均ではなく中央値を使うのは、光沢塗装が空・建物を映り込ませた際の局所的な
+// ハイライト(外れ値)に引っ張られにくくするため。
 //
 // 判定にΔE2000ではなくΔab(L成分を含まないa,bのみのユークリッド距離)を使う理由:
 // 実車テストで、湾曲したパネルは太陽光の当たる角度差により同一塗装でも明度(L)だけが
@@ -17,6 +19,10 @@ header('Content-Type: application/json; charset=utf-8');
 // L成分を除いたことで数値の意味合いが変わるため、実車データが増え次第キャリブレーションが必要。
 const DELTA_AB_THRESHOLD = 2.0; // これ以上で「再塗装の可能性あり」
 const DELTA_AB_CAUTION = 1.0;   // これ以上で「要注意」
+// 矩形内のL*標準偏差がこれを超えたら「映り込みが混ざっているかも」と警告する。
+// 実車データが少ないため暫定値。フラットな塗装面なら数ポイント程度、
+// 空や建物の映り込みが混ざると大きく跳ね上がる想定。
+const L_STDDEV_WARNING_THRESHOLD = 8.0;
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
@@ -134,11 +140,14 @@ foreach (['パネルA' => $rectA, 'パネルB' => $rectB] as $label => $rect) {
 }
 
 try {
-    $rgbA = ColorDiff::averageRgbOfRegion($im, $rectA['x'], $rectA['y'], $rectA['w'], $rectA['h']);
-    $rgbB = ColorDiff::averageRgbOfRegion($im, $rectB['x'], $rectB['y'], $rectB['w'], $rectB['h']);
+    $sampleA = ColorDiff::sampleRegion($im, $rectA['x'], $rectA['y'], $rectA['w'], $rectA['h']);
+    $sampleB = ColorDiff::sampleRegion($im, $rectB['x'], $rectB['y'], $rectB['w'], $rectB['h']);
 } catch (Throwable $e) {
-    fail('平均色の算出に失敗しました: ' . $e->getMessage());
+    fail('色のサンプリングに失敗しました: ' . $e->getMessage());
 }
+
+$rgbA = $sampleA['rgbMedian'];
+$rgbB = $sampleB['rgbMedian'];
 
 $labA = ColorDiff::srgbToLab($rgbA[0], $rgbA[1], $rgbA[2]);
 $labB = ColorDiff::srgbToLab($rgbB[0], $rgbB[1], $rgbB[2]);
@@ -159,6 +168,14 @@ if ($deltaAb >= DELTA_AB_THRESHOLD) {
     $message = '明確な色差は検出されませんでした';
 }
 
+// 映り込み警告: 矩形内の明度(L*)ばらつきが大きい場合、選び直しを促す
+$warnings = [];
+foreach (['パネルA' => $sampleA, 'パネルB' => $sampleB] as $label => $sample) {
+    if ($sample['lStdDev'] >= L_STDDEV_WARNING_THRESHOLD) {
+        $warnings[] = "{$label}の選択範囲に反射や映り込みが含まれている可能性があります。塗装がフラットに見える場所を選び直してください。";
+    }
+}
+
 echo json_encode([
     'ok' => true,
     'deltaAb' => round($deltaAb, 3),
@@ -167,13 +184,16 @@ echo json_encode([
     'deltaE' => round($deltaE, 3),
     'verdict' => $verdict,
     'message' => $message,
+    'warnings' => $warnings,
     'panelA' => [
         'rgb' => array_map(static fn($v) => round($v, 1), $rgbA),
         'lab' => array_map(static fn($v) => round($v, 2), $labA),
+        'lStdDev' => round($sampleA['lStdDev'], 2),
     ],
     'panelB' => [
         'rgb' => array_map(static fn($v) => round($v, 1), $rgbB),
         'lab' => array_map(static fn($v) => round($v, 2), $labB),
+        'lStdDev' => round($sampleB['lStdDev'], 2),
     ],
     'imageSize' => ['w' => $imgW, 'h' => $imgH],
 ], JSON_UNESCAPED_UNICODE);

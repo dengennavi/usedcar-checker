@@ -41,6 +41,32 @@
     padding: 12px;
     box-shadow: 0 1px 4px rgba(0,0,0,0.08);
   }
+  .selection-guidance {
+    background: #eef6ff;
+    border: 1px solid #b8dcff;
+    color: #14507a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 0 0 12px;
+  }
+  .reflection-warning {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 8px;
+    background: #fff8e5;
+    border: 1px solid #e8a400;
+    color: #6b4e00;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .reflection-warning p {
+    margin: 0 0 4px;
+  }
+  .reflection-warning p:last-child {
+    margin-bottom: 0;
+  }
   .mode-buttons {
     display: flex;
     gap: 8px;
@@ -179,6 +205,10 @@
   </div>
 
   <div class="canvas-wrap" id="canvasWrap" hidden>
+    <p class="selection-guidance">
+      空や周囲の景色が映り込んでいない、フラットに見える塗装面を選んでください（ボンネットの端やドアの中央付近がおすすめです）。
+    </p>
+
     <div class="mode-buttons">
       <button type="button" id="modeA" class="mode-btn active" data-mode="A">① パネルAを選択</button>
       <button type="button" id="modeB" class="mode-btn" data-mode="B">② パネルBを選択</button>
@@ -193,6 +223,8 @@
     </div>
 
     <button type="button" id="submitBtn" disabled>判定する</button>
+
+    <div id="reflectionWarning" class="reflection-warning" hidden></div>
 
     <div id="resultSummary" hidden>
       <p class="verdict-title" id="verdictTitle"></p>
@@ -223,6 +255,7 @@
   const submitBtn = document.getElementById('submitBtn');
   const resultEl = document.getElementById('result');
   const rawResultEl = document.getElementById('rawResult');
+  const reflectionWarningEl = document.getElementById('reflectionWarning');
   const resultSummaryEl = document.getElementById('resultSummary');
   const verdictTitleEl = document.getElementById('verdictTitle');
   const verdictDeEl = document.getElementById('verdictDe');
@@ -278,6 +311,7 @@
     submitBtn.disabled = true;
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
+    reflectionWarningEl.hidden = true;
     canvasWrap.hidden = false;
     redraw();
   }
@@ -401,6 +435,7 @@
     submitBtn.disabled = true;
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
+    reflectionWarningEl.hidden = true;
     redraw();
   });
 
@@ -457,6 +492,7 @@
     submitBtn.textContent = '判定中...';
     resultSummaryEl.hidden = true;
     rawResultEl.hidden = true;
+    reflectionWarningEl.hidden = true;
 
     const formData = new FormData();
     formData.append('photo', currentFile);
@@ -492,6 +528,18 @@
   });
 
   function renderResult(data) {
+    if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+      reflectionWarningEl.hidden = false;
+      reflectionWarningEl.innerHTML = '';
+      data.warnings.forEach(function (w) {
+        const p = document.createElement('p');
+        p.textContent = '⚠ ' + w;
+        reflectionWarningEl.appendChild(p);
+      });
+    } else {
+      reflectionWarningEl.hidden = true;
+    }
+
     resultSummaryEl.hidden = false;
     resultSummaryEl.className = 'verdict-' + data.verdict;
     verdictTitleEl.textContent = VERDICT_LABELS[data.verdict] || data.message;

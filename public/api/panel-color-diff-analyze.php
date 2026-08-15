@@ -2,14 +2,21 @@
 declare(strict_types=1);
 
 // ④パネル色差判定（再塗装検出）
-// 写真 + パネルA/Bの矩形範囲を受け取り、平均RGB→Lab変換→ΔE2000を計算して判定結果を返す。
+// 写真 + パネルA/Bの矩形範囲を受け取り、平均RGB→Lab変換→Δab(a*b*平面距離)を計算して判定結果を返す。
+//
+// 判定にΔE2000ではなくΔab(L成分を含まないa,bのみのユークリッド距離)を使う理由:
+// 実車テストで、湾曲したパネルは太陽光の当たる角度差により同一塗装でも明度(L)だけが
+// 大きくズレることがあり、ΔE2000だと誤判定（再塗装の可能性ありと表示）してしまうケースが
+// 確認されたため。ΔE2000は参考値としてレスポンスに含める。
 
 require __DIR__ . '/../../backend/ColorDiff.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
-const DELTA_E_THRESHOLD = 2.0;  // これ以上で「再塗装の可能性あり」
-const DELTA_E_CAUTION = 1.0;    // これ以上で「要注意」
+// 閾値はΔE2000運用時の"2.0"を暫定値として引き継いだもの。
+// L成分を除いたことで数値の意味合いが変わるため、実車データが増え次第キャリブレーションが必要。
+const DELTA_AB_THRESHOLD = 2.0; // これ以上で「再塗装の可能性あり」
+const DELTA_AB_CAUTION = 1.0;   // これ以上で「要注意」
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const ALLOWED_MIMES = ['image/jpeg', 'image/png', 'image/webp'];
 
@@ -135,12 +142,16 @@ try {
 
 $labA = ColorDiff::srgbToLab($rgbA[0], $rgbA[1], $rgbA[2]);
 $labB = ColorDiff::srgbToLab($rgbB[0], $rgbB[1], $rgbB[2]);
+
+// 主判定: Δab（L非依存、色相・彩度のみ）
+$deltaAb = ColorDiff::deltaAb($labA, $labB);
+// 参考値: ΔE2000（Lの影響を含むため、湾曲パネルの陰影差で誤判定しうる）
 $deltaE = ColorDiff::ciede2000($labA, $labB);
 
-if ($deltaE >= DELTA_E_THRESHOLD) {
+if ($deltaAb >= DELTA_AB_THRESHOLD) {
     $verdict = 'repaint_suspected';
     $message = '再塗装の可能性あり';
-} elseif ($deltaE >= DELTA_E_CAUTION) {
+} elseif ($deltaAb >= DELTA_AB_CAUTION) {
     $verdict = 'caution';
     $message = 'わずかな色差があります（経年変化・光条件の影響の可能性もあり、目視でも確認してください）';
 } else {
@@ -150,8 +161,10 @@ if ($deltaE >= DELTA_E_THRESHOLD) {
 
 echo json_encode([
     'ok' => true,
+    'deltaAb' => round($deltaAb, 3),
+    'threshold' => DELTA_AB_THRESHOLD,
+    'caution' => DELTA_AB_CAUTION,
     'deltaE' => round($deltaE, 3),
-    'threshold' => DELTA_E_THRESHOLD,
     'verdict' => $verdict,
     'message' => $message,
     'panelA' => [

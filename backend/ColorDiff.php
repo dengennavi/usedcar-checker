@@ -97,7 +97,31 @@ final class ColorDiff
     }
 
     /**
+     * a*b*平面上のユークリッド距離（Δab = sqrt(Δa²+Δb²)）。明度(L)成分は含まない。
+     *
+     * 実車テストで、湾曲したパネルでは太陽光の当たり方の違いにより
+     * 同一塗装でもLだけが大きくズレるケースが確認された（a値は完全一致でもL差だけで
+     * ΔE2000が閾値を超え「再塗装の可能性あり」と誤判定した）。
+     * 色相・彩度（a,b）は照明条件に比較的左右されにくいため、再塗装検出の主判定には
+     * こちらを用いる。
+     *
+     * 注意: CIE正式のΔC*（クロマ差 = C2*-C1*、符号付きスカラー）とは別物。
+     * ここでは a,b平面上の2点間距離を指す（呼び方の混同を避けるため deltaAb と命名）。
+     *
+     * @param array{0:float,1:float,2:float} $lab1
+     * @param array{0:float,1:float,2:float} $lab2
+     */
+    public static function deltaAb(array $lab1, array $lab2): float
+    {
+        [, $a1, $b1] = $lab1;
+        [, $a2, $b2] = $lab2;
+
+        return sqrt(($a2 - $a1) ** 2 + ($b2 - $b1) ** 2);
+    }
+
+    /**
      * CIEDE2000色差(ΔE00)を計算する (Sharma, Wu, Dalal 2005)。
+     * 主判定には使わず、参考値として結果に含める（Lの影響を受けるため）。
      *
      * @param array{0:float,1:float,2:float} $lab1
      * @param array{0:float,1:float,2:float} $lab2

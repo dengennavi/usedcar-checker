@@ -495,7 +495,8 @@
     resultSummaryEl.hidden = false;
     resultSummaryEl.className = 'verdict-' + data.verdict;
     verdictTitleEl.textContent = VERDICT_LABELS[data.verdict] || data.message;
-    verdictDeEl.textContent = 'ΔE2000 = ' + data.deltaE.toFixed(2) + '（閾値: ' + data.threshold.toFixed(1) + '） / ' + data.message;
+    verdictDeEl.textContent = 'Δab(色相・彩度差) = ' + data.deltaAb.toFixed(2) + '（閾値: ' + data.threshold.toFixed(1) + '）'
+      + ' / 参考ΔE2000 = ' + data.deltaE.toFixed(2) + ' / ' + data.message;
     valAEl.textContent = formatPanelValue(data.panelA);
     valBEl.textContent = formatPanelValue(data.panelB);
   }
